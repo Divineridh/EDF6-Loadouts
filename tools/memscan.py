@@ -10,12 +10,15 @@ Uso:
     python memscan.py poke   <pid> <address_hex> <valor_i32>
     python memscan.py dump   <pid> <address_hex> <bytes_antes> <bytes_despues>
     python memscan.py findptr <pid> <address_hex> <max_offset_hex>
+    python memscan.py findtable <pid>
     python memscan.py loadout_save <pid> <address_hex> <nombre> <loadouts.json>
     python memscan.py loadout_load <pid> <address_hex> <nombre> <loadouts.json>
 """
 import ctypes
 import json
+import os
 import pickle
+import re
 import struct
 import sys
 from ctypes import wintypes as wt
@@ -222,6 +225,72 @@ def all_regions(h):
             break
 
 
+WEAPON_COUNT = 1564
+CATALOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "EDF6-UI", "build", "catalog.json")
+
+
+def load_catalog():
+    try:
+        with open(CATALOG, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+
+CLASSES = ["Ranger", "Wing Diver", "Air Raider", "Fencer"]
+SLOTS_PER_CLASS = 6
+WEAPON_SLOTS_PER_CLASS = 4
+NONZERO_WEAPON_DWORD = rb"(?:[\x01-\xff][\x00-\x06]|\x00[\x01-\x06])\x00\x00"
+TABLE_SIGNATURE = re.compile(
+    rb"[\x00-\x03]\x00\x00\x00....(?:%s){%d}\xff\xff\xff\xff"
+    % (NONZERO_WEAPON_DWORD, len(CLASSES) * SLOTS_PER_CLASS),
+    re.DOTALL,
+)
+
+
+def parse_table(blob):
+    active_class, unknown = struct.unpack_from("<ii", blob, 0)
+    slots = struct.unpack_from("<%di" % (len(CLASSES) * SLOTS_PER_CLASS), blob, 8)
+    return active_class, unknown, [list(slots[i * SLOTS_PER_CLASS : (i + 1) * SLOTS_PER_CLASS]) for i in range(len(CLASSES))]
+
+
+def weapons_match_classes(loadouts, catalog):
+    for class_name, slots in zip(CLASSES, loadouts):
+        for weapon in slots[:WEAPON_SLOTS_PER_CLASS]:
+            if weapon >= WEAPON_COUNT or catalog[weapon]["class"] != class_name:
+                return False
+    return True
+
+
+def find_tables(h, catalog):
+    for base, size in regions(h):
+        data = read(h, base, size)
+        if not data:
+            continue
+        for m in TABLE_SIGNATURE.finditer(data):
+            if m.start() % 4:
+                continue
+            active_class, unknown, loadouts = parse_table(m.group())
+            if weapons_match_classes(loadouts, catalog):
+                yield base + m.start(), active_class, unknown, loadouts
+
+
+def cmd_findtable(pid):
+    h = open_process(pid)
+    catalog = load_catalog()
+    if catalog is None:
+        raise SystemExit("falta %s (correr EDF6-UI/tools/weapons.py)" % CATALOG)
+    found = 0
+    for addr, active_class, unknown, loadouts in find_tables(h, catalog):
+        found += 1
+        print("== %016x  clase activa=%d (%s)  desconocido=%d" % (addr, active_class, CLASSES[active_class], unknown))
+        for class_name, slots in zip(CLASSES, loadouts):
+            print("   %s" % class_name)
+            for i, weapon in enumerate(slots):
+                print("      %d  %5d  %s" % (i + 1, weapon, catalog[weapon]["name"] if weapon < WEAPON_COUNT else "?"))
+    print("tablas: %d" % found)
+
+
 def cmd_findptr(pid, target_hex, max_offset):
     h = open_process(pid)
     target = int(target_hex, 16)
@@ -259,6 +328,8 @@ if __name__ == "__main__":
         cmd_dump(int(args[1]), args[2], args[3], args[4])
     elif op == "findptr":
         cmd_findptr(int(args[1]), args[2], args[3])
+    elif op == "findtable":
+        cmd_findtable(int(args[1]))
     elif op == "poke":
         cmd_poke(int(args[1]), args[2], args[3])
     elif op == "loadout_save":

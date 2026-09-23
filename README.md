@@ -1,82 +1,86 @@
 # EDF6 Loadouts
 
-Guardar y cargar el arma equipada en Earth Defense Force 6 con hotkeys, escribiendo directo en la
-memoria del proceso. Sin Cheat Engine ni terceros — herramientas propias en `tools/`.
+Guardar y cargar el equipamiento de Earth Defense Force 6 escribiendo directo en la memoria del
+proceso. Sin Cheat Engine ni terceros — herramientas propias en `tools/`.
 
 Juego: `C:\Descargas Pesadas\EARTH DEFENSE FORCE 6\EARTH DEFENSE FORCE 6` (proceso `EDF6.exe`, x64,
-sin WOW64).
+sin WOW64). Instalado junto a un mod que agrega slots de armas: los 6 slots por clase de abajo son
+con ese mod, y el layout puede ser distinto en el juego vanilla.
 
-## Estado: MVP de una sola arma
+## Estado
 
-Hoy solo cubre **weapon 1**. Sirvió para validar que el enfoque (memory hacking sin hookear
-`EDF.dll`) es viable antes de invertir en un plugin C++ inyectado.
+Fase de mapeo de datos. El overlay (estilo [EDF6-Compendium](../EDF6-Compendium), loadouts nombrados
+por clase, vistos como la tarjeta del juego) viene después de cerrar lo que falta verificar.
 
-## Hallazgos
+## La tabla de equipamiento
 
-**El índice del catálogo de armas es el ID real que usa el motor en runtime.** El catálogo sale de
-[EDF6-UI](../EDF6-UI) (`tools/weapons.py` genera `build/catalog.json`, mismo orden que
-`WEAPON/WEAPONTABLE.SGO`). Se confirmó equipando 3 armas de Air Raider con IDs conocidos
-(Limpet Gun=1041, Heavy Bomber Phobos Z Plan 4=1005, Vulcan Cannon M1=964) y acotando por
-descarte: escanear memoria privada (`MEM_PRIVATE`) buscando el valor exacto tras equipar la
-primera arma (1576 candidatos), filtrar por el valor tras equipar la segunda (2 candidatos), y
-filtrar de nuevo tras equipar la tercera (1 candidato único y estable).
+Una sola estructura en el heap guarda la clase activa y el equipamiento de las 4 clases:
 
-**Hay una tabla de ~40-56 entradas int32** alrededor de esa dirección: una por categoría de arma,
-con el índice de la última arma seleccionada en esa categoría, compartida entre clases (una entrada
-catalogada como "Ranger" apareció mezclada entre entradas de Air Raider) y rellena con `-1` para
-categorías sin selección todavía. Esta misma tabla alimenta la tarjeta de perfil del jugador ("battle
-card"): las 6 armas que muestra son 6 entradas consecutivas de esta tabla.
+| offset | contenido |
+|--------|-----------|
+| +0 | clase activa: 0 Ranger, 1 Wing Diver, 2 Air Raider, 3 Fencer |
+| +4 | desconocido (vale 3 en todas las lecturas) |
+| +8 | Ranger: 6 slots int32 |
+| +32 | Wing Diver: 6 slots |
+| +56 | Air Raider: 6 slots |
+| +80 | Fencer: 6 slots |
+| +104 | `-1` de relleno |
 
-**Escribir la entrada re-equipa el arma de verdad**, confirmado visualmente en el HUD/pantalla. No
-hace falta hookear ninguna función de `EDF.dll` ni sincronizar munición o sonido aparte — el motor
-lee esta tabla como fuente de verdad.
+Cada clase tiene **4 armas + 2 de soporte** (equipo del Ranger, core de la Wing Diver, vehículos del
+Air Raider, accesorios del Fencer), en el mismo orden que la tarjeta de clase del lobby.
 
-## Limitación pendiente: la dirección no es estable
+Cada slot es el **índice del catálogo** de armas (0-1563), el que genera
+[EDF6-UI](../EDF6-UI) con `tools/weapons.py` en el orden de `WEAPON/WEAPONTABLE.SGO`. El motor usa
+ese índice directamente.
 
-La dirección se ubica hoy cruzando procesos (`ReadProcessMemory` desde afuera) y **cambia en cada
-arranque del juego** (heap, ASLR). Un pointer scan encontró una capa intermedia en heap (varias
-copias del mismo patrón, probablemente una estructura de jugador) sin resolver hasta un offset
-estable del módulo — haría falta un debugger tipo x64dbg (no instalado) para seguir esa cadena con
-un breakpoint de acceso.
+⚠️ Los vehículos (EF31 Nereid, categoría 9) figuran como "Ranger" en `catalog.json`: el
+`category // 100` no sirve para ellos. Por eso la validación de clase solo mira los 4 slots de arma.
 
-Alternativa más simple, pendiente de implementar: un plugin C++ inyectado (como
-[EDF6-Compendium](../EDF6-Compendium), que ya usa MinHook + imgui) puede repetir este mismo escaneo
-**desde adentro** del proceso al cargar, sin cruzar procesos ni resolver punteros multinivel.
+## Lo verificado en juego
 
-## Herramientas
+- **Escribir un slot re-equipa el arma**, sin hookear `EDF.dll`: probado en arma 1 y 2 y soportes
+  de la clase activa, y en armas de otra clase (se ven al cambiar a ella).
+- **Escribir +0 cambia la clase.** El personaje del lobby no se actualiza solo; al abrir
+  "Class/Equipment" aparece la clase nueva con su equipamiento.
+- Cambiar de clase desde el menú no pisa lo escrito en los otros bloques.
+- El formato y el orden se mantienen entre sesiones; la dirección no (heap).
+
+## Pendiente de verificar
+
+- Si lo escrito **llega al save** (al reiniciar, el arma 1 de Air Raider volvió a una elegida desde
+  el menú, no a la última escrita).
+- Si una misión arrancada **sin pasar por "Class/Equipment"** usa la clase y armas escritas.
+- Qué pasa si se escribe **durante una misión**.
+- Qué es el int32 de +4, y el encabezado anterior a la tabla (3075, 3080, 5746, 2981 y ceros).
+
+## Encontrar la tabla
 
 ```bash
-# localizar la tabla (repetir cada partida hasta resolver el pointer path):
-python tools/memscan.py first  <pid> <id_arma_actual>     pass1.pkl
-python tools/memscan.py next   <pid> <id_nueva_arma>      pass1.pkl pass2.pkl
-python tools/memscan.py next   <pid> <id_otra_arma_mas>   pass2.pkl pass3.pkl   # hasta 1 candidato
+python tools/memscan.py findtable <pid>
+```
 
-# inspeccionar:
+Busca la firma completa con una regex sobre bytes (corre en C; sin numpy): clase en [0,3], un int32,
+24 slots no nulos menores a 1564 y un `-1`. Después valida que las 4 armas de cada bloque sean de su
+clase. En una sesión real da un único candidato en ~90 s. El tiempo es casi todo `ReadProcessMemory`
+copiando el heap entre procesos: desde un plugin inyectado sería mucho menor.
+
+Limitación: exige slots no nulos, así que un slot con el índice 0 (Broken PA-11) hace que no la
+encuentre. Admitir ceros hace que la regex caiga en backtracking sobre las zonas de memoria en cero y
+tarde minutos.
+
+## Otras herramientas
+
+```bash
 python tools/memscan.py dump    <pid> <address_hex> <bytes_antes> <bytes_despues>
-python tools/memscan.py findptr <pid> <address_hex> <max_offset_hex>
 python tools/memscan.py peek    <pid> <address_hex>
 python tools/memscan.py poke    <pid> <address_hex> <valor_i32>
+python tools/memscan.py findptr <pid> <address_hex> <max_offset_hex>
 
-# loadouts manuales (un solo guardado por nombre):
-python tools/memscan.py loadout_save <pid> <address_hex> <nombre> loadouts.json
-python tools/memscan.py loadout_load <pid> <address_hex> <nombre> loadouts.json
+# búsqueda por valor exacto, como se encontró la tabla la primera vez:
+python tools/memscan.py first <pid> <id_arma_actual> pass1.pkl
+python tools/memscan.py next  <pid> <id_nueva_arma>  pass1.pkl pass2.pkl
 ```
 
-Para jugar con hotkeys en vez de comandos sueltos, una vez localizada la dirección:
-
-```bash
-python tools/loadout_hotkeys.py <pid> <address_hex> loadouts.json
-```
-
-F9/F10 guardan el arma 1 actual como loadout 1/2, F11 carga loadout 1, F12 carga loadout 2 (F12
-puede fallar si Windows/Steam ya lo tiene reservado — no rompe el resto).
-
-`loadouts.json` es estado de la sesión, no se versiona.
-
-## Próximos pasos
-
-- Mapear el offset de **weapon 2** (probablemente un bloque paralelo a esta misma tabla).
-- Mapear qué offset corresponde a qué categoría, para poder guardar/cargar un set completo de una
-  sola vez en vez de una sola arma.
-- Decidir entre resolver el pointer path o migrar a un plugin inyectado que la re-escanea cada
-  partida.
+`tools/loadout_hotkeys.py` es el primer MVP (solo arma 1, dirección pasada a mano): F9/F10 guardan,
+F11/F12 cargan. Queda como prueba de concepto; el overlay lo reemplaza. `loadouts.json` y los `.pkl`
+no se versionan.
