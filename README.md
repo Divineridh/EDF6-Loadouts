@@ -13,6 +13,31 @@ Mapeo de datos cerrado y verificado en juego. Sigue el overlay (estilo
 [EDF6-Compendium](../EDF6-Compendium), loadouts nombrados por clase, vistos como la tarjeta del
 juego).
 
+## Diseño del overlay (acordado)
+
+- **Vive en la DLL del Compendium**, como un panel propio. Reusa el hook de Present encadenado
+  con el overlay de Steam, la detección de tecla por tres caminos, el bloqueo de input, el catálogo y
+  el lector del save. Dos DLLs hookeando el mismo WndProc y las mismas funciones de user32 se
+  pisarían. Este repo queda como la investigación y la spec de datos.
+- **Se abre con F2**, configurable en `config.ini` igual que el F1 del Compendium. Textos en inglés.
+- **Tarjetas como la de clase del juego**: título propio, 4 armas, separador, 2 de soporte, con el
+  Lv del catálogo (coincide con el que muestra el juego). Pestañas por clase. Primero va "Equipped
+  now", leída en vivo de la tabla, con "Save as new". Si un guardado coincide con lo equipado, se
+  marca.
+- **Load** escribe los 6 slots y, si es de otra clase, también la clase activa. Avisa según el
+  contexto: en el lobby, que hay que abrir Class/Equipment para ver el personaje; en misión, que se
+  aplica desde la próxima.
+- **Varios loadouts nombrados por clase** en `Mods\Loadouts\loadouts.json`. Cada slot guarda el
+  índice y el nombre del arma, así un cambio de índices (update, DLC) se detecta en vez de equipar
+  otra arma sin avisar.
+- **La tabla se busca dentro del proceso** la primera vez que se abre el panel, se cachea la
+  dirección y se re-valida con la firma en cada lectura. En C++ se pueden admitir slots en cero.
+- **v2, editor**: tocar un slot abre un selector con las armas que tenés de esa clase (del save).
+  Antes hay que mapear qué categorías acepta cada tipo de slot: escribir un soporte en un slot de
+  arma no está probado y podría cerrar el juego.
+- Sin confirmar: el Lv en amarillo de la tarjeta parece marcar las armas con mejora máxima (dato que
+  el save tiene).
+
 ## La tabla de equipamiento
 
 Una sola estructura en el heap guarda la clase activa y el equipamiento de las 4 clases:
