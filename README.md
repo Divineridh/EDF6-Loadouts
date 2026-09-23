@@ -9,8 +9,9 @@ con ese mod, y el layout puede ser distinto en el juego vanilla.
 
 ## Estado
 
-Fase de mapeo de datos. El overlay (estilo [EDF6-Compendium](../EDF6-Compendium), loadouts nombrados
-por clase, vistos como la tarjeta del juego) viene después de cerrar lo que falta verificar.
+Mapeo de datos cerrado y verificado en juego. Sigue el overlay (estilo
+[EDF6-Compendium](../EDF6-Compendium), loadouts nombrados por clase, vistos como la tarjeta del
+juego).
 
 ## La tabla de equipamiento
 
@@ -42,16 +43,20 @@ ese índice directamente.
   de la clase activa, y en armas de otra clase (se ven al cambiar a ella).
 - **Escribir +0 cambia la clase.** El personaje del lobby no se actualiza solo; al abrir
   "Class/Equipment" aparece la clase nueva con su equipamiento.
+- Una misión arrancada **directo desde el lobby**, sin abrir "Class/Equipment", usa la clase y las
+  armas escritas.
+- **Llega al save**: después de una misión y un reinicio, la clase y los slots escritos siguen ahí.
+  Si se cierra el juego sin que haya guardado de por medio, se pierde (así pasó la primera vez).
+- **Durante una misión**, escribir no toca al personaje que ya está en el mapa: el cambio queda
+  aplicado para la siguiente y se ve en el lobby al volver. Sirve para dejar un loadout "en cola".
 - Cambiar de clase desde el menú no pisa lo escrito en los otros bloques.
 - El formato y el orden se mantienen entre sesiones; la dirección no (heap).
 
-## Pendiente de verificar
+## Sin resolver
 
-- Si lo escrito **llega al save** (al reiniciar, el arma 1 de Air Raider volvió a una elegida desde
-  el menú, no a la última escrita).
-- Si una misión arrancada **sin pasar por "Class/Equipment"** usa la clase y armas escritas.
-- Qué pasa si se escribe **durante una misión**.
-- Qué es el int32 de +4, y el encabezado anterior a la tabla (3075, 3080, 5746, 2981 y ceros).
+- Qué es el int32 de +4 (siempre 3) y el encabezado anterior a la tabla (3075, 3080, 5746, 2981 y
+  ceros). No hace falta para leer ni escribir loadouts.
+- Cómo hacer que el personaje del lobby se actualice al cambiar la clase sin abrir el menú.
 
 ## Encontrar la tabla
 
