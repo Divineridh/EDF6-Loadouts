@@ -111,8 +111,8 @@ DLL.
 
 ## Diagnostics
 
-Once registered, everything goes to `Compendium.log` with the `loadouts:` prefix. `modulos:
-registrado Loadouts` means the Compendium accepted it; `loadouts: table at ...` that the equipment
+Once registered, everything goes to `Compendium.log` with the `loadouts:` prefix. `modules:
+registered Loadouts` means the Compendium accepted it; `loadouts: table at ...` that the equipment
 was found. Before registering, or without the Compendium, messages go to `Loadouts.log`.
 
 ## Research tools

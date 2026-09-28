@@ -50,7 +50,7 @@ IF IT DOESN'T SHOW UP
 With the Compendium installed, everything is written to Compendium.log, next
 to EDF6.exe:
 
-  - "modulos: registrado Loadouts"   the Compendium accepted it
+  - "modules: registered Loadouts"    the Compendium accepted it
   - "loadouts: table at ..."          it found the equipment in memory
 
 If the first one is missing, check that the Compendium is v0.4.0 or newer. If
