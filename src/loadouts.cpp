@@ -28,6 +28,12 @@ constexpr int kWeaponSlotsPerClass = 4;
 constexpr int kHeaderDwords = 2;
 constexpr int kTableDwords = kHeaderDwords + kClassCount * kSlotsPerClass;
 constexpr uint32_t kTerminator = 0xFFFFFFFF;
+constexpr int kEmptySlot = -1;
+constexpr int kEmptySupport = 1362;
+constexpr const char *kEmptySlotName = "(empty)";
+constexpr int kRanger = 0;
+constexpr int kAirRaider = 2;
+constexpr int kFencer = 3;
 constexpr int kMaxCandidates = 8;
 constexpr DWORD kRescanMs = 5000;
 constexpr DWORD kPollMs = 500;
@@ -46,7 +52,10 @@ struct SavedLoadout {
     bool outdated = false;
 };
 
+enum WeaponKind : uint8_t { kOtherKind, kVehicleKind, kPlaceGunKind };
+
 std::vector<int> g_classOfWeapon;
+std::vector<uint8_t> g_kindOfWeapon;
 std::atomic<const Edf6OverlayHost *> g_host{nullptr};
 int g_toggleKey = VK_F2;
 
@@ -94,6 +103,24 @@ std::string WeaponName(int index) {
     Edf6Weapon w;
     return WeaponAt(index, w) ? std::string(w.name) : std::string();
 }
+
+// The game marks an unequipped slot with a placeholder, not with -1: a hidden catalog entry (305
+// shows as "No Equipment"; 866, 867 and 1262 are the other hidden ones) or, in a support slot,
+// 1362, which the game shows as "Empty" for every class but Fencer, the one that can equip it
+// (Gunner's Exoskeleton). -1 is accepted too, in case another version of the game uses it.
+bool IsEmptySlot(int classId, int slot, int index) {
+    if (index == kEmptySlot) {
+        return true;
+    }
+    if (index >= 0 && index < (int)g_classOfWeapon.size() && g_classOfWeapon[index] < 0) {
+        return true;
+    }
+    return slot >= kWeaponSlotsPerClass && index == kEmptySupport && classId != kFencer;
+}
+
+std::string SlotName(int classId, int slot, int index) {
+    return IsEmptySlot(classId, slot, index) ? std::string(kEmptySlotName) : WeaponName(index);
+}
 std::atomic<uint32_t *> g_table{nullptr};
 
 std::mutex g_snapshotMutex;
@@ -113,37 +140,53 @@ void PublishSnapshot(const Equipment *e) {
     }
 }
 
-bool LooksLikeTable(const uint32_t *p) {
-    if (p[0] >= kClassCount || p[kTableDwords] != kTerminator) {
+// The weapon-slot mod lets Ranger and Air Raider share some items: vehicles go in either one's
+// support slots, and Ranger turrets (Support Place Gun) in Air Raider's weapon slots.
+bool SlotAccepts(int classId, int slot, int weapon) {
+    const int owner = g_classOfWeapon[weapon];
+    if (owner == classId) {
+        return true;
+    }
+    if (!((classId == kRanger && owner == kAirRaider) || (classId == kAirRaider && owner == kRanger))) {
         return false;
     }
-    const uint32_t weaponCount = (uint32_t)g_classOfWeapon.size();
-    for (int c = 0; c < kClassCount; c++) {
-        for (int s = 0; s < kSlotsPerClass; s++) {
-            const uint32_t weapon = p[kHeaderDwords + c * kSlotsPerClass + s];
-            if (weapon >= weaponCount) {
-                return false;
-            }
-            if (s < kWeaponSlotsPerClass && g_classOfWeapon[weapon] != c) {
-                return false;
-            }
-        }
-    }
-    return true;
+    const uint8_t kind = g_kindOfWeapon[weapon];
+    return slot < kWeaponSlotsPerClass ? classId == kAirRaider && kind == kPlaceGunKind : kind == kVehicleKind;
 }
 
+// Support items are checked against the class too: that rejects the scan windows that start a
+// few dwords off the real table.
 bool SlotsFitClass(int classId, const int slots[kSlotsPerClass]) {
+    int weapons = 0;
     for (int s = 0; s < kSlotsPerClass; s++) {
-        if (slots[s] < 0 || slots[s] >= (int)g_classOfWeapon.size()) {
+        const int weapon = slots[s];
+        if (IsEmptySlot(classId, s, weapon)) {
+            continue;
+        }
+        if (weapon < 0 || weapon >= (int)g_classOfWeapon.size() || !SlotAccepts(classId, s, weapon)) {
             return false;
         }
-        if (s < kWeaponSlotsPerClass && g_classOfWeapon[slots[s]] != classId) {
+        weapons += s < kWeaponSlotsPerClass ? 1 : 0;
+    }
+    return weapons > 0;
+}
+
+// The game also keeps an all-empty template with the same layout (placeholders, and the first
+// weapon of each category). Its +4 is -1, while the real table's has been 0 or 3.
+bool LooksLikeTable(const uint32_t *p) {
+    if (p[0] >= kClassCount || p[1] == kTerminator || p[kTableDwords] != kTerminator) {
+        return false;
+    }
+    for (int c = 0; c < kClassCount; c++) {
+        if (!SlotsFitClass(c, reinterpret_cast<const int *>(p + kHeaderDwords + c * kSlotsPerClass))) {
             return false;
         }
     }
     return true;
 }
 
+// -1 is both the terminator and an empty slot, so it tests for a table ending there and then
+// keeps the run going.
 bool ScanRegion(uint32_t *begin, size_t count, uint32_t **found, int &foundCount) {
     const uint32_t weaponCount = (uint32_t)g_classOfWeapon.size();
     __try {
@@ -155,7 +198,7 @@ bool ScanRegion(uint32_t *begin, size_t count, uint32_t **found, int &foundCount
                     foundCount < kMaxCandidates) {
                     found[foundCount++] = begin + i - kTableDwords;
                 }
-                run = 0;
+                run++;
             } else if (v < weaponCount) {
                 run++;
             } else {
@@ -234,7 +277,7 @@ void LogEquipment(const Equipment &e) {
         std::string line = kClassNames[c];
         line += ":";
         for (int s = 0; s < kSlotsPerClass; s++) {
-            const std::string name = WeaponName(e.slots[c][s]);
+            const std::string name = SlotName(c, s, e.slots[c][s]);
             line += s == kWeaponSlotsPerClass ? " || " : (s == 0 ? " " : " | ");
             line += name.empty() ? std::to_string(e.slots[c][s]) : name;
         }
@@ -310,8 +353,7 @@ int ClassIdByName(const std::string &name) {
 void MarkOutdated(SavedLoadout &l) {
     l.outdated = !SlotsFitClass(l.classId, l.slots);
     for (int s = 0; s < kSlotsPerClass && !l.outdated; s++) {
-        Edf6Weapon w;
-        l.outdated = !WeaponAt(l.slots[s], w) || w.name != l.names[s];
+        l.outdated = SlotName(l.classId, s, l.slots[s]) != l.names[s];
     }
 }
 
@@ -420,7 +462,7 @@ void SaveAsNew(int classId, const int slots[kSlotsPerClass], const char *rawTitl
     }
     for (int s = 0; s < kSlotsPerClass; s++) {
         l.slots[s] = slots[s];
-        l.names[s] = WeaponName(slots[s]);
+        l.names[s] = SlotName(classId, s, slots[s]);
     }
     MarkOutdated(l);
     g_loadouts.push_back(l);
@@ -805,12 +847,12 @@ void DrawDetail(ImDrawList *dl, float px, float pw, float bodyTop, float footerT
         const float ty = y + (D(kRowH) - textH) * 0.5f;
         PaintText(dl, g_fontLabel, 13.0f, ImVec2(tl + D(10.0f), ty + D(1.0f)), kFaint, kSlotLabels[s]);
 
-        const std::string nowName = WeaponName(e.slots[c][s]);
+        const std::string nowName = SlotName(c, s, e.slots[c][s]);
         FittedText(dl, nullptr, 16.0f, ImVec2(tl + D(70.0f), ty), diff ? kSoft : kMuted,
                    nowName.empty() ? std::string("?") : nowName, equippedWidth);
 
         Edf6Weapon mineWeapon;
-        const bool mine = WeaponAt(l.slots[s], mineWeapon);
+        const bool mine = !IsEmptySlot(c, s, l.slots[s]) && WeaponAt(l.slots[s], mineWeapon);
         const std::string mineName = mine ? std::string(mineWeapon.name) : l.names[s];
         if (diff) {
             const float my = y + D(kRowH) * 0.5f - D(3.0f);
@@ -999,10 +1041,16 @@ bool BuildClassTable(const Edf6OverlayHost *h) {
         return false;
     }
     g_classOfWeapon.assign(count, -1);
+    g_kindOfWeapon.assign(count, kOtherKind);
     for (int i = 0; i < count; i++) {
         Edf6Weapon w;
         if (h->weapon(i, &w)) {
             g_classOfWeapon[i] = ClassIdByName(w.className);
+            if (strncmp(w.category, "Vehicle", 7) == 0) {
+                g_kindOfWeapon[i] = kVehicleKind;
+            } else if (strcmp(w.category, "Support Place Gun") == 0) {
+                g_kindOfWeapon[i] = kPlaceGunKind;
+            }
         }
     }
     return true;

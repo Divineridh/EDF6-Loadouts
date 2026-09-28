@@ -57,11 +57,24 @@ Each class has **4 weapons and 2 support items**, in the same order as the lobby
 slot is the **catalog index** (0-1563, the order of `WEAPON/WEAPONTABLE.SGO`), which is the id the
 engine uses directly.
 
+An unequipped slot holds a placeholder, not `-1`: a hidden catalog entry (305, which the game shows
+as "No Equipment"; 866, 867 and 1262 are the other hidden ones) or, in a support slot, 1362, which
+the game shows as "Empty" for every class but Fencer (for Fencer it is Gunner's Exoskeleton).
+
 The table is found by scanning the process's private read-write memory for that signature, with
-every weapon slot checked against its class. It takes around 400 ms and usually yields a single
-candidate. The address is cached and the signature re-checked on every read, since it moves between
-sessions. Vehicles (e.g. EF31 Nereid) are listed as Ranger in the catalog, so only the 4 weapon
-slots are checked against the class.
+every slot checked against its class. It takes around 400 ms. The address is cached and the
+signature re-checked on every read, since it moves between sessions. The rules:
+
+- a slot is empty or an item of the class, and each class has at least one weapon;
+- Ranger and Air Raider share some items with the weapon-slot mod: vehicles (e.g. EF31 Nereid,
+  listed as Ranger) go in either one's support slots, and Ranger turrets (Support Place Gun) in Air
+  Raider's weapon slots;
+- support slots are checked too, which rejects scan windows a few dwords off the real table;
+- +4 isn't `-1`. The game also keeps an all-empty template with the same layout (placeholders and
+  the first weapon of each category) whose +4 is `-1`; the real table's has been 0 or 3.
+
+A save made with the vanilla config and then loaded with the weapon-slot mod can have items in
+unexpected slots (e.g. Wing Diver's core in W4, since vanilla Wing Diver has only 4 slots).
 
 Verified in game:
 
