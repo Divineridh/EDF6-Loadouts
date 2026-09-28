@@ -1128,7 +1128,7 @@ DWORD WINAPI StartThread(LPVOID) {
 extern "C" BOOL __declspec(dllexport) EML6_Load(PluginInfo *pluginInfo) {
     pluginInfo->infoVersion = PluginInfo::MaxInfoVer;
     pluginInfo->name = "Loadouts";
-    pluginInfo->version = PLUG_VER(1, 0, 0, 0);
+    pluginInfo->version = PLUG_VER(1, 0, 1, 0);
     static bool started = false;
     if (started) {
         return TRUE;
